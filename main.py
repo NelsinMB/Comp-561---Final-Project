@@ -245,9 +245,9 @@ def compute_expected_score(M, background_probs, query_probs):
     return expected
 
 if __name__ == "__main__":
-    sequence_file = '/Users/nmarti55/Documents/fa2.txt'
-    confidence_file = '/Users/nmarti55/Documents/conf2.txt'
-    substitution_matrix_file = '/Users/nmarti55/Documents/substitution_matrix.txt'
+    sequence_file = '/Users/nmarti55/Desktop/Comp561FinalProject/resources/fa2.txt'
+    confidence_file = '/Users/nmarti55/Desktop/Comp561FinalProject/resources/conf2.txt'
+    substitution_matrix_file = '/Users/nmarti55/Desktop/Comp561FinalProject/resources/substitution_matrix.txt'
 
     D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
     M = load_substitution_matrix(substitution_matrix_file)
