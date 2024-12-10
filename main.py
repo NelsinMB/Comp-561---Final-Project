@@ -19,7 +19,7 @@ def load_substitution_matrix(matrix_file):
     """
     Load a substitution matrix from a file.
     Expected format:
-        First line: A C G T (or chosen nucleotide order)
+        First line: A C G T (or chosen nucleotides)
         Following lines: symmetric matrix of scores
     """
     with open(matrix_file, 'r') as f:
@@ -49,80 +49,58 @@ def nucleotide_probabilities(p_max, max_nucleotide='A'):
         probs[o] = equal_share
     return probs
 
-def most_probable_nucleotide(conf_value):
-    """
-    Given a confidence value which represents the probability of the most likely nucleotide,
-    we must know which is the most likely nucleotide. Here, we assume that the sequence file
-    gives us the predicted nucleotide at each position. The 'confidence' is the probability
-    of that given nucleotide.
-
-    If sequence[i] = N, and confidence[i] = p_max for that N,
-    then other nucleotides have (1 - p_max)/3 each.
-    """
-    # This function just returns the conf_value, since we already know max nucleotide from D.
-    return conf_value
-
 def get_w_mer(D, i, w):
     """Extract the w-mer starting at position i of D (0-based)."""
     if i + w > len(D):
         return None
     return D[i:i+w]
 
-def compute_wmer_probability(wmer, probs_list):
+def generate_top_wmers_for_position(D, conf_values, i, w, max_candidates):
     """
-    Given a w-mer and a list of probability distributions for each position:
-    probs_list: a list of dicts [ {A: pA, C: pC, G: pG, T: pT}, ... ] of length w.
-    Compute the probability as the product of probabilities for chosen nucleotides.
-    """
-    p = 1.0
-    for idx, nuc in enumerate(wmer):
-        p *= probs_list[idx][nuc]
-    return p
+    Generate up to max_candidates w-mers at position i.
+    Heuristic:
+    - Start with the maximum-likelihood w-mer.
+    - Identify up to the three least probable positions in the w-mer and substitute 
+      each with the other three nucleotides, generating variants.
+    - Potentially produce up to 1 + 3*3 = 10 variants as before, but this time
+      we limit ourselves to max_candidates.
 
-def generate_top_wmers_for_position(D, conf_values, i, w):
-    """
-    Generate up to 10 w-mers at position i:
-    - Start with the maximum-likelihood w-mer (choose for each position the given nucleotide in D).
-    - Identify the positions in the w-mer with the smallest p_max[i].
-    - Substitute those least probable positions with the other three nucleotides.
-
-    Note: We assume that D[i] gives the max nucleotide at position i.
+    If max_candidates < 10, we simply take fewer variants.
+    If max_candidates > 10, we still produce only up to 10 variants (or adjust 
+    the logic to produce more variants if desired).
     """
     if i + w > len(D):
         return []
 
-    # For each of the w positions, determine the probability distribution.
+    # For each position in the w-mer, determine the probability distribution
     wmer_seq = D[i:i+w]
     wmer_probs = []
     p_max_list = []
+    nucleotides = ['A', 'C', 'G', 'T']
+
     for pos in range(i, i+w):
-        # max nucleotide: D[pos], p_max = conf_values[pos]
         max_nuc = D[pos]
         p_max = conf_values[pos]
         dist = nucleotide_probabilities(p_max, max_nuc)
         wmer_probs.append(dist)
-        p_max_list.append((pos - i, dist[max_nuc]))  # (relative_pos_in_wmer, p_max_value)
+        p_max_list.append((pos - i, dist[max_nuc]))
 
-    # Sort w-mer positions by ascending p_max_value
-    p_max_list.sort(key=lambda x: x[1]) 
+    # Sort positions by ascending p_max_value
+    p_max_list.sort(key=lambda x: x[1])
 
     # Start with the maximum-likelihood w-mer:
     best_wmer = "".join(D[i+j] for j in range(w))
     candidates = [best_wmer]
 
-    # We want up to 9 more variants by substituting:
-    # Replace at the least probable position -> generate 3 variants
-    # Replace at the second least probable position -> 3 variants
-    # Replace at the third least probable position -> 3 variants
-    # This yields up to 10 total (1 original + 9 variants).
+    # If we want more candidates, generate variants.
+    # We attempt up to 3 rounds, each substituting the nucleotides at the least probable positions.
+    # Each round can generate up to 3 new variants.
+    # Total up to 10 possible variants (1 original + 9 variants).
+    # If max_candidates < 10, we'll just truncate sooner.
+    # If max_candidates > 10, we could consider extending the logic, but for now we keep it simple.
 
-    # Nucleotides set
-    nucleotides = ['A', 'C', 'G', 'T']
-
-    # A helper to create variants by substituting a single position:
     def substitute_one_position(wmer_str, rel_pos):
         orig_nuc = wmer_str[rel_pos]
-        # Pick other three nucleotides:
         variants = []
         for nuc in nucleotides:
             if nuc != orig_nuc:
@@ -130,50 +108,36 @@ def generate_top_wmers_for_position(D, conf_values, i, w):
                 variants.append(var)
         return variants
 
-    # Create variants
-    for idx_in_sorted in range(min(3, len(p_max_list))):
+    rounds = min(3, len(p_max_list))  # up to 3 positions to vary
+    for idx_in_sorted in range(rounds):
         rel_pos = p_max_list[idx_in_sorted][0]
         new_variants = []
-        for c in candidates:
-            # Only generate variants from the original best_wmer for simplicity,
-            # as discussed in the approach. If you want a more exhaustive approach,
-            # you could consider generating variants from previously generated variants.
-            if c == best_wmer:
-                new_variants.extend(substitute_one_position(c, rel_pos))
-        # Add these variants to candidates, ensuring we don't exceed the limit.
+        # Only generate variants from the original best_wmer for consistency
+        if best_wmer in candidates:
+            new_variants.extend(substitute_one_position(best_wmer, rel_pos))
         candidates.extend(new_variants)
-        if len(candidates) >= 10:
+        if len(candidates) >= max_candidates:
             break
 
-    # If we somehow got more than 10, truncate:
-    candidates = candidates[:10]
+    # Truncate to max_candidates if needed
+    candidates = candidates[:max_candidates]
 
-    # Optional: We can rank candidates by their computed probability and pick the top 10.
-    # Since we rely on the heuristic, we assume all candidates are decent.
-    # If needed, compute probabilities and sort:
-    # candidate_probs = []
-    # for c in candidates:
-    #     p = compute_wmer_probability(c, wmer_probs)
-    #     candidate_probs.append((c, p))
-    # candidate_probs.sort(key=lambda x: x[1], reverse=True)
-    # candidates = [cp[0] for cp in candidate_probs][:10]
-
+    # (Optional) Sort candidates by computed probability if desired. For now, we rely on heuristic.
     return candidates
 
-
-def build_wmer_map(D, conf_values, w):
+def build_wmer_map(D, conf_values, w, max_candidates):
     """
     Build the hash map f: (w-mer) -> list of positions
-    Insert up to 10 w-mers per position as per the chosen heuristic.
+    Insert up to max_candidates w-mers per position as per the chosen heuristic.
     """
+    from collections import defaultdict
     f_map = defaultdict(list)
     for i in range(len(D) - w + 1):
-        wmers = generate_top_wmers_for_position(D, conf_values, i, w)
+        wmers = generate_top_wmers_for_position(D, conf_values, i, w, max_candidates)
         # Insert each w-mer into the map
         for wm in wmers:
             f_map[wm].append(i)
     return f_map
-
 
 def find_seeds(q, f_map, w):
     """Find seed positions in D for each w-mer in q."""
@@ -185,7 +149,6 @@ def find_seeds(q, f_map, w):
                 seeds.append((q_wmer, pos))
     return seeds
 
-
 # Example usage:
 if __name__ == "__main__":
     # Example inputs (modify paths as needed):
@@ -193,20 +156,14 @@ if __name__ == "__main__":
     confidence_file = '/Users/nmarti55/Documents/conf2.txt'
     substitution_matrix_file = '/Users/nmarti55/Documents/substitution_matrix.txt'
 
-    # Load D and confidences
     D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
-
-    # Load substitution matrix (not heavily used here yet)
     M = load_substitution_matrix(substitution_matrix_file)
 
-    # Ask for query q and w size (for demonstration):
     q = input("Enter your query sequence: ").strip()
     w = int(input("Enter word size w: "))
+    max_candidates = int(input("Enter how many sequences you want to consider at each index: "))
 
-    # Build w-mer map
-    f_map = build_wmer_map(D, conf_values, w)
-
-    # Find seeds
+    f_map = build_wmer_map(D, conf_values, w, max_candidates)
     seeds = find_seeds(q, f_map, w)
 
     print("Found seeds:")
