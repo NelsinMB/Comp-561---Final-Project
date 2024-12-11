@@ -10,7 +10,7 @@ def load_sequence_and_confidence(seq_file, conf_file):
         confidence_values = list(map(float, f.read().strip().split()))
 
     if len(D) != len(confidence_values):
-        raise ValueError("Sequence and confidence lengths do not match.")
+        raise ValueError("Sequence length and confidence values length do not match.")
 
     return D, confidence_values
 
@@ -131,83 +131,6 @@ def expected_score(M, probs, q_nuc):
         score += probs[x] * M[q_nuc][x]
     return score
 
-def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, dropoff_threshold, verbose=False):
-    q_start = seed_q_start
-    q_end = seed_q_start + w - 1
-    d_start = seed_d_start
-    d_end = seed_d_start + w - 1
-
-    def get_probs(pos):
-        max_nuc = D[pos]
-        p_max = conf_values[pos]
-        return nucleotide_probabilities(p_max, max_nuc)
-
-    current_score = 0.0
-    for offset in range(w):
-        q_nuc = q[q_start + offset]
-        d_probs = get_probs(d_start + offset)
-        s = expected_score(M, d_probs, q_nuc)
-        current_score += s
-    max_score = current_score
-
-    if verbose:
-        print("\nStarting ungapped extension from seed:")
-        print(f"  Seed q-range: {q_start}-{q_end}, D-range: {d_start}-{d_end}")
-        print(f"  Initial seed score: {current_score:.2f} (max: {max_score:.2f})")
-
-    # Extend left
-    left_extension = 1
-    while q_start - left_extension >= 0 and d_start - left_extension >= 0:
-        q_pos_ext = q_start - left_extension
-        d_pos_ext = d_start - left_extension
-        q_nuc = q[q_pos_ext]
-        d_probs = get_probs(d_pos_ext)
-        s = expected_score(M, d_probs, q_nuc)
-        new_score = current_score + s
-        if verbose:
-            print(f"Extending left to q[{q_pos_ext}]={q_nuc}, D[{d_pos_ext}]")
-            print(f"Probabilities: {d_probs}, Score Contribution: {s:.2f}")
-            print(f"New Score: {new_score:.2f}, Max Score: {max_score:.2f}")
-        if new_score < max_score - dropoff_threshold:
-            if verbose:
-                print("Dropoff threshold reached, stopping left extension.")
-            break
-        current_score = new_score
-        if current_score > max_score:
-            max_score = current_score
-        q_start -= 1
-        d_start -= 1
-        left_extension += 1
-
-    # Extend right
-    right_extension = 1
-    while q_end + right_extension < len(q) and d_end + right_extension < len(D):
-        q_pos_ext = q_end + right_extension
-        d_pos_ext = d_end + right_extension
-        q_nuc = q[q_pos_ext]
-        d_probs = get_probs(d_pos_ext)
-        s = expected_score(M, d_probs, q_nuc)
-        new_score = current_score + s
-        if verbose:
-            print(f"Extending right to q[{q_pos_ext}]={q_nuc}, D[{d_pos_ext}]")
-            print(f"Probabilities: {d_probs}, Score Contribution: {s:.2f}")
-            print(f"New Score: {new_score:.2f}, Max Score: {max_score:.2f}")
-        if new_score < max_score - dropoff_threshold:
-            if verbose:
-                print("Dropoff threshold reached, stopping right extension.")
-            break
-        current_score = new_score
-        if current_score > max_score:
-            max_score = current_score
-        q_end += 1
-        d_end += 1
-        right_extension += 1
-
-    if verbose:
-        print(f"Final HSP: Q: {q_start}-{q_end}, D: {d_start}-{d_end}, Score: {max_score:.2f}\n")
-
-    return (q_start, q_end, d_start, d_end, max_score)
-
 def compute_background_distribution(D, conf_values):
     """Compute average background probabilities over D."""
     total_positions = len(D)
@@ -244,10 +167,87 @@ def compute_expected_score(M, background_probs, query_probs):
             expected += query_probs[q_n]*background_probs[x]*M[q_n][x]
     return expected
 
+def local_gapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, gap_penalty, verbose=False):
+    """
+    Perform a local alignment (similar to Smith-Waterman) starting around the seed.
+    Here, for simplicity, we consider the full q and D, but you could also focus on a region.
+    """
+    len_q = len(q)
+    len_D = len(D)
+
+    # DP matrix and traceback
+    dp = [[0]*(len_D+1) for _ in range(len_q+1)]
+    traceback = [[None]*(len_D+1) for _ in range(len_q+1)]
+
+    max_score = 0.0
+    max_pos = (0,0)
+
+    def get_probs(j):
+        max_nuc = D[j-1]
+        p_max = conf_values[j-1]
+        return nucleotide_probabilities(p_max, max_nuc)
+
+    # Fill DP using local alignment logic
+    for i in range(1, len_q+1):
+        q_nuc = q[i-1]
+        for j in range(1, len_D+1):
+            dist = get_probs(j)
+            match_score = dp[i-1][j-1] + expected_score(M, dist, q_nuc)
+            delete_score = dp[i-1][j] + gap_penalty
+            insert_score = dp[i][j-1] + gap_penalty
+            cell_score = max(match_score, delete_score, insert_score, 0)
+
+            dp[i][j] = cell_score
+            if cell_score == 0:
+                traceback[i][j] = None
+            elif cell_score == match_score:
+                traceback[i][j] = 'D'
+            elif cell_score == delete_score:
+                traceback[i][j] = 'U'
+            else:
+                traceback[i][j] = 'L'
+
+            if cell_score > max_score:
+                max_score = cell_score
+                max_pos = (i,j)
+
+    # Traceback from max_pos until score=0
+    i, j = max_pos
+    aligned_q = []
+    aligned_D = []
+
+    while i > 0 and j > 0 and dp[i][j] != 0:
+        dir_ = traceback[i][j]
+        if dir_ == 'D':
+            aligned_q.append(q[i-1])
+            # Choose most probable nucleotide at D-position j
+            dist = get_probs(j)
+            chosen_nuc = max(dist.keys(), key=lambda x: dist[x])
+            aligned_D.append(chosen_nuc)
+            i -= 1
+            j -= 1
+        elif dir_ == 'U':
+            aligned_q.append(q[i-1])
+            aligned_D.append('-')
+            i -= 1
+        elif dir_ == 'L':
+            aligned_q.append('-')
+            dist = get_probs(j)
+            chosen_nuc = max(dist.keys(), key=lambda x: dist[x])
+            aligned_D.append(chosen_nuc)
+            j -= 1
+        else:
+            break
+
+    aligned_q.reverse()
+    aligned_D.reverse()
+
+    return max_score, "".join(aligned_q), "".join(aligned_D)
+
 if __name__ == "__main__":
-    sequence_file = '/Users/nmarti55/Desktop/Comp561FinalProject/resources/fa2.txt'
-    confidence_file = '/Users/nmarti55/Desktop/Comp561FinalProject/resources/conf2.txt'
-    substitution_matrix_file = '/Users/nmarti55/Desktop/Comp561FinalProject/resources/substitution_matrix.txt'
+    sequence_file = './resources/fa2.txt'
+    confidence_file = './resources/conf2.txt'
+    substitution_matrix_file = './resources/substitution_matrix.txt'
 
     D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
     M = load_substitution_matrix(substitution_matrix_file)
@@ -257,6 +257,7 @@ if __name__ == "__main__":
     max_candidates = int(input("Enter how many sequences you want to consider at each index: "))
     probability_threshold = float(input("Enter a probability threshold for w-mers (e.g. 0.0 for none): "))
     dropoff_threshold = float(input("Enter drop-off threshold for ungapped extension (e.g. 2.0): "))
+    gap_penalty = float(input("Enter gap penalty (e.g. -2.0): "))
     verbose_input = input("Enable verbose mode? (y/n): ").strip().lower()
     verbose = True if verbose_input == 'y' else False
 
@@ -264,7 +265,6 @@ if __name__ == "__main__":
     background_probs = compute_background_distribution(D, conf_values)
     query_probs = compute_query_distribution(q)
 
-    # Compute expected score
     exp_score = compute_expected_score(M, background_probs, query_probs)
     print(f"Computed expected score using query distribution and background distribution: {exp_score:.4f}")
     if exp_score < 0:
@@ -279,12 +279,22 @@ if __name__ == "__main__":
     for seed in seeds:
         print("q_wmer:", seed[0], "q_pos:", seed[1], "d_pos:", seed[2])
 
+    # Instead of a global gapped extension, we do a local gapped extension:
+    # For each seed, we run local_gapped_extension to find the best local alignment around that seed.
     hsps = []
     for q_wmer, q_pos, d_pos in seeds:
-        hsp = ungapped_extension(q, D, conf_values, q_pos, d_pos, w, M, dropoff_threshold, verbose=verbose)
-        hsps.append(hsp)
+        # We can incorporate the seed information as a starting hint,
+        # but local_gapped_extension doesn't need a seed start necessarily.
+        # It's local, so it finds the best scoring region anywhere.
+        # If desired, you could limit the region of D searched based on the seed position.
+        score, align_q, align_d = local_gapped_extension(q, D, conf_values, q_pos, d_pos, w, M, gap_penalty, verbose=verbose)
+        hsps.append((score, align_q, align_d))
 
-    print("HSPs found:")
+    print("Local gapped HSPs found:")
     for h in hsps:
-        q_start, q_end, d_start, d_end, best_score = h
-        print(f"Q: {q_start}-{q_end}, D: {d_start}-{d_end}, Score: {best_score:.2f}")
+        score, align_q, align_d = h
+        print(f"Alignment Score: {score:.2f}")
+        print(align_q)
+        print(align_d)
+        print()
+
