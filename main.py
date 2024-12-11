@@ -181,8 +181,9 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
     """
     Perform an ungapped extension from a seed to create an HSP.
     Extends left and right as long as the expected score increases.
+    Tracks and returns the alignment corresponding to the maximum score.
     """
-    # Initialize
+    # Initialize seed boundaries
     q_start = seed_q_start
     q_end = seed_q_start + w - 1
     d_start = seed_d_start
@@ -193,32 +194,45 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
         p_max = conf_values[pos]
         return nucleotide_probabilities(p_max, max_nuc)
 
-    # Scores the seed using the expected score of each position
+    # Score the seed using the expected score of each position
     current_score = 0.0
     for offset in range(w):
         q_nuc = q[q_start + offset]
-        d_probs = get_probs(d_start + offset)
+        d_pos = d_start + offset
+        d_nuc = D[d_pos]
+        d_probs = get_probs(d_pos)
         s = expected_score(M, d_probs, q_nuc)
+        if verbose:
+            print(f"Position Q[{q_start + offset}]={q_nuc} - D[{d_pos}]={d_nuc}, Expected Score: {s:.2f}")
         current_score += s
 
     max_score = current_score
+    # Initialize best alignment positions
+    best_q_start, best_q_end = q_start, q_end
+    best_d_start, best_d_end = d_start, d_end
+
     if verbose:
         print(f"\nStarting ungapped extension for seed at Q:{q_start}-{q_end}, D:{d_start}-{d_end}")
         print(f"Initial ungapped score: {current_score:.2f}")
 
     # Extend to the left
-    # left_extension = 1
-    while q_start > 0 and d_start > 0: # Prevents it from going out the left boundary of q and D
+    while q_start > 0 and d_start > 0:
         q_pos = q_start - 1
         d_pos = d_start - 1
         q_nuc = q[q_pos]
+        d_nuc = D[d_pos]
         d_probs = get_probs(d_pos)
         s = expected_score(M, d_probs, q_nuc)
         new_score = current_score + s
 
         if verbose:
-            print(f"Extending left to Q[{q_pos}]={q_nuc}, D[{d_pos}]")
+            print(f"Extending left to Q[{q_pos}]={q_nuc}, D[{d_pos}]={d_nuc}")
             print(f"Expected score: {s:.2f}, New cumulative score: {new_score:.2f}")
+
+        if new_score > max_score:
+            max_score = new_score
+            best_q_start, best_d_start = q_pos, d_pos
+            best_q_end, best_d_end = q_end, d_end
 
         if new_score < max_score - dropoff_threshold:
             if verbose:
@@ -229,24 +243,24 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
         q_start = q_pos
         d_start = d_pos
         current_score = new_score
-        if current_score > max_score:
-            max_score = current_score
-
-        #left_extension += 1
 
     # Extend to the right
-    # right_extension = 1
     while q_end + 1 < len(q) and d_end + 1 < len(D):
         q_pos = q_end + 1
         d_pos = d_end + 1
         q_nuc = q[q_pos]
+        d_nuc = D[d_pos]
         d_probs = get_probs(d_pos)
         s = expected_score(M, d_probs, q_nuc)
         new_score = current_score + s
 
         if verbose:
-            print(f"Extending right to Q[{q_pos}]={q_nuc}, D[{d_pos}]")
+            print(f"Extending right to Q[{q_pos}]={q_nuc}, D[{d_pos}]={d_nuc}")
             print(f"Expected score: {s:.2f}, New cumulative score: {new_score:.2f}")
+
+        if new_score > max_score:
+            max_score = new_score
+            best_q_end, best_d_end = q_pos, d_pos
 
         if new_score < max_score - dropoff_threshold:
             if verbose:
@@ -257,85 +271,69 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
         q_end = q_pos
         d_end = d_pos
         current_score = new_score
-        if current_score > max_score:
-            max_score = current_score
-
-        #right_extension += 1
 
     if verbose:
-        print(f"Final HSP: Q:{q_start}-{q_end}, D:{d_start}-{d_end}, Score: {max_score:.2f}")
+        aligned_query = q[best_q_start:best_q_end+1]
+        aligned_db = D[best_d_start:best_d_end+1]
+        print(f"Final HSP: Q:{best_q_start}-{best_q_end} = '{aligned_query}' | "
+              f"D:{best_d_start}-{best_d_end} = '{aligned_db}' | Score: {max_score:.2f}")
 
-    return (q_start, q_end, d_start, d_end, max_score)
+    return (best_q_start, best_q_end, best_d_start, best_d_end, max_score)
+
 
 def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, verbose=False):
     """
-    Perform a gapped extension (Smith-Waterman) on the given HSP.
+    Perform a gapped extension (Smith-Waterman) dynamically extending beyond HSP bounds.
     """
     q_start, q_end, d_start, d_end, hsp_score = hsp
 
-    # Extract the relevant subsequences
-    extended_q = q[q_start:q_end+1]
-    extended_D = D[d_start:d_end+1]
-
-    # Perform local gapped extension within this region
-    len_q = len(extended_q)
-    len_D = len(extended_D)
+    # Use full sequences for alignment
+    len_q = len(q)
+    len_D = len(D)
 
     # DP matrix and traceback
-    dp = [[0]*(len_D+1) for _ in range(len_q+1)]
-    traceback = [[None]*(len_D+1) for _ in range(len_q+1)]
+    dp = [[0] * (len_D + 1) for _ in range(len_q + 1)]
+    traceback = [[None] * (len_D + 1) for _ in range(len_q + 1)]
 
     max_score = 0.0
-    max_pos = (0,0)
+    max_pos = None
 
     def get_probs(j):
-        max_nuc = D[d_start + j -1]
-        p_max = conf_values[d_start + j -1]
+        max_nuc = D[j - 1]
+        p_max = conf_values[j - 1]
         return nucleotide_probabilities(p_max, max_nuc)
 
-    # Fill DP using local alignment logic
-    for i in range(1, len_q+1):
-        q_nuc = extended_q[i-1]
-        for j in range(1, len_D+1):
+    # Fill DP matrix dynamically
+    for i in range(1, len_q + 1):
+        q_nuc = q[i - 1]
+        for j in range(1, len_D + 1):
             dist = get_probs(j)
-            match = dp[i-1][j-1] + expected_score(M, dist, q_nuc)
-            delete = dp[i-1][j] + gap_penalty
-            insert = dp[i][j-1] + gap_penalty
-            cell_score = max(match, delete, insert, 0)
+            match = dp[i - 1][j - 1] + expected_score(M, dist, q_nuc)
+            delete = dp[i - 1][j] + gap_penalty
+            insert = dp[i][j - 1] + gap_penalty
+            dp[i][j] = max(0, match, delete, insert)
 
-            dp[i][j] = cell_score
-            if cell_score == 0:
-                traceback[i][j] = None
-            elif cell_score == match:
-                traceback[i][j] = 'D'
-            elif cell_score == delete:
-                traceback[i][j] = 'U'
-            else:
-                traceback[i][j] = 'L'
-
-            if cell_score > max_score:
-                max_score = cell_score
+            if dp[i][j] > max_score:
+                max_score = dp[i][j]
                 max_pos = (i, j)
 
     # Traceback from max_pos
-    i, j = max_pos
     aligned_q = []
     aligned_D = []
-
-    while i > 0 and j > 0 and dp[i][j] != 0:
-        dir_ = traceback[i][j]
-        if dir_ == 'D':
-            aligned_q.append(extended_q[i-1])
-            aligned_D.append(extended_D[j-1])
+    i, j = max_pos
+    while i > 0 and j > 0 and dp[i][j] > 0:
+        if dp[i][j] == dp[i - 1][j - 1] + expected_score(M, get_probs(j), q[i - 1]):
+            aligned_q.append(q[i - 1])
+            aligned_D.append(D[j - 1])
             i -= 1
             j -= 1
-        elif dir_ == 'U':
-            aligned_q.append(extended_q[i-1])
+        elif dp[i][j] == dp[i - 1][j] + gap_penalty:
+            aligned_q.append(q[i - 1])
             aligned_D.append('-')
             i -= 1
-        elif dir_ == 'L':
+        elif dp[i][j] == dp[i][j - 1] + gap_penalty:
             aligned_q.append('-')
-            aligned_D.append(extended_D[j-1])
+            aligned_D.append(D[j - 1])
             j -= 1
         else:
             break
@@ -343,13 +341,18 @@ def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, verbose=False
     aligned_q.reverse()
     aligned_D.reverse()
 
+    query_start = i
+    db_start = j
+
     if verbose:
         print(f"\nGapped Extension on HSP Q:{q_start}-{q_end}, D:{d_start}-{d_end}")
         print(f"Extended Query: {''.join(aligned_q)}")
         print(f"Extended DB:    {''.join(aligned_D)}")
         print(f"Gapped Extension Score: {max_score:.2f}")
 
-    return (max_score, ''.join(aligned_q), ''.join(aligned_D))
+    # Return the expected number of values for unpacking
+    return max_score, ''.join(aligned_q), ''.join(aligned_D)
+
 
 def main():
     sequence_file = './resources/fa2.txt'
