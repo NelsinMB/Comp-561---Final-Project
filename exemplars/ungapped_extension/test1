@@ -1,0 +1,22 @@
+D =  
+AGTCTAACC
+0.01 0.01 0.01 0.99 0.99 0.50 0.36 0.32 0.85
+
+S = 
+A C G T
+1 -1 -1 -1
+-1 1 -1 -1
+-1 -1 1 -1
+-1 -1 -1 1
+
+q = CTA
+w = 2
+max_candidates = 1
+w_mer threshold = 0.8
+ungapped threshold = 0
+
+Output: CTA
+
+###
+This is a nice example as it extends a seed CT to HSP CTA, barely. The expected score of adding 'A' is 0.00, which is due to an even match/mismatch score and 'A' occurring in D with probability 0.5. Any lower probability would have yielded 'CT' as the output. 
+Not proven: In cases where the magnitude of the match score and the mismatch score are equal, the expected score is negative when P(max_nucleotide) < 0.5, positive when P(max_nucleotide) > 0.5.

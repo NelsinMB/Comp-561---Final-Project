@@ -457,10 +457,56 @@ def testing_seeding():
     for seed in seeds:
         print(f"q_wmer: {seed[0]} q_pos: {seed[1]} d_pos: {seed[2]}")
 
+    return q, D, conf_values, M, w, max_candidates, probability_threshold, f_map, verbose, seeds
 
-def testing_ungapepd():
-    testing_seeding()
-    dropoff_threshold = float(input("Enter drop-off threshold for gapped extension (e.g. 2.0): "))
+
+def testing_ungapped_extension():
+    """
+    Tests the ungapped extension process with verbose output using sample data.
+    """
+    # Obtain sample data
+    q, D, conf_values, M, w, max_candidates, probability_threshold, f_map, verbose, seeds = testing_seeding()
+    
+    # Define drop-off threshold
+    dropoff_threshold = float(input("Enter drop-off threshold for ungapped extension (e.g. 2.0): "))
+    
+    print("\n--- Ungapped Extension Phase ---")
+    
+    # Ungapped Extension Phase: Extend seeds into HSPs
+    hsps = []
+    for idx, (q_wmer, q_pos, d_pos) in enumerate(seeds):
+
+        if verbose: 
+            print(f"\nProcessing Seed {idx+1}:")
+            print(f"  Query W-mer: '{q_wmer}' at Q[{q_pos}:{q_pos + w -1}]")
+            print(f"  Database Position: D[{d_pos}:{d_pos + w -1}]")
+        
+        hsp = ungapped_extension(
+            q, D, conf_values, q_pos, d_pos, w, M, dropoff_threshold, verbose=verbose
+        )
+        hsps.append(hsp)
+    
+    print("\n--- Ungapped HSPs Found ---")
+    for idx, hsp in enumerate(hsps):
+        q_start, q_end, d_start, d_end, score = hsp
+        print(f"HSP {idx+1}: Q[{q_start}:{q_end}] = '{q[q_start:q_end+1]}' | "
+              f"D[{d_start}:{d_end}] = '{D[d_start:d_end+1]}' | Score: {score:.2f}")
+    
+    # Select top HSPs (e.g., top 1)
+    if not hsps:
+        print("\nNo HSPs found. Exiting.")
+        sys.exit(0)
+    
+    # Sort HSPs by score descending
+    hsps_sorted = sorted(hsps, key=lambda x: x[4], reverse=True)
+    top_hsps = hsps_sorted[:max_candidates]  # Adjust as needed
+    
+    print("\n--- Top Ungapped HSPs ---")
+    for idx, hsp in enumerate(top_hsps):
+        q_start, q_end, d_start, d_end, score = hsp
+        print(f"Top HSP {idx+1}: Q[{q_start}:{q_end}] = '{q[q_start:q_end+1]}' | "
+              f"D[{d_start}:{d_end}] = '{D[d_start:d_end+1]}' | Score: {score:.2f}")
+
 
 
     
@@ -469,4 +515,4 @@ def testing_ungapepd():
 
 
 if __name__ == "__main__":
-    testing_seeding()
+    testing_ungapped_extension()
