@@ -354,78 +354,25 @@ def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, verbose=False
     return max_score, ''.join(aligned_q), ''.join(aligned_D)
 
 
-def main():
-    sequence_file = './resources/fa2.txt'
-    confidence_file = './resources/conf2.txt'
-    substitution_matrix_file = './resources/substitution_matrix.txt'
+def filter_identical_alignments(alignments):
+    """
+    Filter identical gapped alignments to retain only unique ones.
+    """
+    unique_alignments = []
+    seen = set()
 
-    D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
-    M = load_substitution_matrix(substitution_matrix_file)
-
-    q = input("Enter your query sequence: ").strip().upper()
-    w = int(input("Enter word size w: "))
-    max_candidates = int(input("Enter how many sequences you want to consider at each index: "))
-    probability_threshold = float(input("Enter a probability threshold for w-mers (e.g. 0.0 for none): "))
-    dropoff_threshold = float(input("Enter drop-off threshold for ungapped extension (e.g. 2.0): "))
-    gap_penalty = float(input("Enter gap penalty (e.g. -2.0): "))
-    verbose_input = input("Enable verbose mode? (y/n): ").strip().lower()
-    verbose = True if verbose_input == 'y' else False
-
-    # Compute background and query distributions
-    background_probs = compute_background_distribution(D, conf_values)
-    query_probs = compute_query_distribution(q)
-
-    exp_score = compute_expected_score_overall(M, background_probs, query_probs)
-    print(f"\nComputed expected score using query distribution and background distribution: {exp_score:.4f}")
-    if exp_score < 0:
-        print("The expected score is negative, which is often desirable.")
-    else:
-        print("The expected score is not negative. Consider adjusting the scoring matrix or approach.")
-
-    # Build w-mer map
-    f_map = build_wmer_map(D, conf_values, w, max_candidates, probability_threshold)
-
-    # Find seeds
-    seeds = find_seeds(q, f_map, w)
-
-    print("\nFound seeds:")
-    for seed in seeds:
-        print(f"q_wmer: {seed[0]} q_pos: {seed[1]} d_pos: {seed[2]}")
-
-    # Ungapped Extension Phase: Extend seeds into HSPs
-    hsps = []
-    for q_wmer, q_pos, d_pos in seeds:
-        hsp = ungapped_extension(q, D, conf_values, q_pos, d_pos, w, M, dropoff_threshold, verbose=verbose)
-        hsps.append(hsp)
-
-    print("\nUngapped HSPs found:")
-    for idx, hsp in enumerate(hsps):
-        q_start, q_end, d_start, d_end, score = hsp
-        print(f"HSP {idx+1}: Q:{q_start}-{q_end}, D:{d_start}-{d_end}, Score: {score:.2f}")
-
-    # Select top HSPs (e.g., top 1)
-    if not hsps:
-        print("\nNo HSPs found. Exiting.")
-        sys.exit(0)
-
-    # Sort HSPs by score descending
-    hsps = sorted(hsps, key=lambda x: x[4], reverse=True)
-
-    # Gapped Extension Phase: Perform gapped extension HSPs
-    gapped_alignments = []
-    for hsp in hsps:
-        score, align_q, align_d = local_gapped_extension(
-            q, D, conf_values, hsp, M, gap_penalty, verbose=verbose
-        )
-        gapped_alignments.append((score, align_q, align_d))
-
-    print("\nGapped Alignments found:")
-    for idx, alignment in enumerate(gapped_alignments):
+    for alignment in alignments:
         score, align_q, align_d = alignment
-        print(f"Gapped Alignment {idx+1}:")
-        print(f"Alignment Score: {score:.2f}")
-        print(f"Query: {align_q}")
-        print(f"DB:    {align_d}\n")
+        key = (align_q, align_d)  # Use alignment sequences as the key
+        if key not in seen:
+            unique_alignments.append(alignment)
+            seen.add(key)
+
+    return unique_alignments
+
+
+def main():
+   testing_gapped_extension() #May as well use this now.
 
 
 def testing_map():
@@ -518,8 +465,10 @@ def testing_gapped_extension():
         )
         gapped_alignments.append((score, align_q, align_d))
 
+    filtered_gapped_alignments = filter_identical_alignments(gapped_alignments)
+
     print("\nGapped Alignments found:")
-    for idx, alignment in enumerate(gapped_alignments):
+    for idx, alignment in enumerate(filtered_gapped_alignments):
         score, align_q, align_d = alignment
         print(f"Gapped Alignment {idx+1}:")
         print(f"Alignment Score: {score:.2f}")
@@ -528,4 +477,4 @@ def testing_gapped_extension():
 
 
 if __name__ == "__main__":
-    testing_gapped_extension()
+    main()
