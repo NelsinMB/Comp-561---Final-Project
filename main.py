@@ -1,6 +1,7 @@
 import sys
 from collections import defaultdict, Counter
 
+# Considered verified.
 def load_sequence_and_confidence(seq_file, conf_file):
     """Load a sequence and corresponding confidence values."""
     with open(seq_file, 'r') as f:
@@ -14,6 +15,7 @@ def load_sequence_and_confidence(seq_file, conf_file):
 
     return D, confidence_values
 
+# Considered verified.
 def load_substitution_matrix(matrix_file):
     """
     Load a substitution matrix from a file.
@@ -36,6 +38,7 @@ def load_substitution_matrix(matrix_file):
             mat[row_nuc][col_nuc] = float(val)
     return mat
 
+# Considered verified.
 def nucleotide_probabilities(p_max, max_nucleotide='A'):
     """Given p_max and its nucleotide, assign equal probability to other three nucleotides."""
     nucleotides = ['A', 'C', 'G', 'T']
@@ -57,6 +60,7 @@ def compute_wmer_probability(wmer, wmer_probs):
             break
     return p
 
+# Mostly verified.
 def generate_top_wmers_for_position(D, conf_values, i, w, max_candidates):
     if i + w > len(D):
         return [], []
@@ -72,7 +76,7 @@ def generate_top_wmers_for_position(D, conf_values, i, w, max_candidates):
         p_max = conf_values[pos]
         dist = nucleotide_probabilities(p_max, max_nuc)
         wmer_probs.append(dist)
-        p_max_list.append((pos - i, dist[max_nuc]))
+        p_max_list.append((pos - i, dist[max_nuc])) 
 
     # Sort positions by ascending p_max_value
     p_max_list.sort(key=lambda x: x[1])
@@ -90,7 +94,7 @@ def generate_top_wmers_for_position(D, conf_values, i, w, max_candidates):
                 variants.append(var)
         return variants
 
-    rounds = min(3, len(p_max_list))  # up to 3 positions to vary
+    rounds = len(p_max_list) # up to 3 positions to vary 
     for idx_in_sorted in range(rounds):
         rel_pos = p_max_list[idx_in_sorted][0]
         new_variants = []
@@ -103,6 +107,7 @@ def generate_top_wmers_for_position(D, conf_values, i, w, max_candidates):
     candidates = candidates[:max_candidates]
     return candidates, wmer_probs
 
+# Verified.
 def build_wmer_map(D, conf_values, w, max_candidates, probability_threshold):
     f_map = defaultdict(list)
     for i in range(len(D) - w + 1):
@@ -414,5 +419,21 @@ def main():
         print(f"Query: {align_q}")
         print(f"DB:    {align_d}\n")
 
+
+def testing_map():
+    sequence_file = './resources/fa2.txt'
+    confidence_file = './resources/conf2.txt'
+    substitution_matrix_file = './resources/substitution_matrix.txt'
+    D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
+    M = load_substitution_matrix(substitution_matrix_file)
+    w = int(input("Enter word size w: "))
+    max_candidates = int(input("Enter how many sequences you want to consider at each index: "))
+    probability_threshold = float(input("Enter a probability threshold for w-mers (e.g. 0.0 for none): "))
+    f_map = build_wmer_map(D, conf_values, w, max_candidates, probability_threshold)
+    print(f_map)
+
+
+
+
 if __name__ == "__main__":
-    main()
+    testing_map()
