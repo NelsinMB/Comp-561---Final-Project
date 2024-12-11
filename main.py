@@ -121,6 +121,7 @@ def build_wmer_map(D, conf_values, w, max_candidates, probability_threshold):
             f_map[wm].append(i)
     return f_map
 
+# Verified.
 def find_seeds(q, f_map, w):
     seeds = []
     for start in range(len(q) - w + 1):
@@ -130,12 +131,14 @@ def find_seeds(q, f_map, w):
                 seeds.append((q_wmer, start, pos))
     return seeds
 
+# Unverified.
 def expected_score(M, probs, q_nuc):
     score = 0.0
     for x in ['A', 'C', 'G', 'T']:
         score += probs[x] * M[q_nuc][x]
     return score
 
+# Consider verified.
 def compute_background_distribution(D, conf_values):
     """Compute average background probabilities over D."""
     total_positions = len(D)
@@ -151,6 +154,7 @@ def compute_background_distribution(D, conf_values):
         sum_probs[n] /= total_positions
     return sum_probs
 
+# Consider verified.
 def compute_query_distribution(q):
     """Compute frequency distribution of nucleotides in q."""
     count = Counter(q)
@@ -162,6 +166,7 @@ def compute_query_distribution(q):
         'T': count.get('T',0)/length
     }
 
+# Unverified.
 def compute_expected_score_overall(M, background_probs, query_probs):
     """
     E[score] = sum_{q_n,x} q_p(q_n)*bar{p}(x)*M(q_n,x)
@@ -188,6 +193,7 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
         p_max = conf_values[pos]
         return nucleotide_probabilities(p_max, max_nuc)
 
+    # Scores the seed using the expected score of each position
     current_score = 0.0
     for offset in range(w):
         q_nuc = q[q_start + offset]
@@ -201,10 +207,10 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
         print(f"Initial ungapped score: {current_score:.2f}")
 
     # Extend to the left
-    left_extension = 1
-    while q_start - left_extension >= 0 and d_start - left_extension >= 0:
-        q_pos = q_start - left_extension
-        d_pos = d_start - left_extension
+    # left_extension = 1
+    while q_start > 0 and d_start > 0: # Prevents it from going out the left boundary of q and D
+        q_pos = q_start - 1
+        d_pos = d_start - 1
         q_nuc = q[q_pos]
         d_probs = get_probs(d_pos)
         s = expected_score(M, d_probs, q_nuc)
@@ -220,19 +226,19 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
             break
 
         # Update positions and scores
-        q_start -= 1
-        d_start -= 1
+        q_start = q_pos
+        d_start = d_pos
         current_score = new_score
         if current_score > max_score:
             max_score = current_score
 
-        left_extension += 1
+        #left_extension += 1
 
     # Extend to the right
-    right_extension = 1
-    while q_end + right_extension < len(q) and d_end + right_extension < len(D):
-        q_pos = q_end + right_extension
-        d_pos = d_end + right_extension
+    # right_extension = 1
+    while q_end + 1 < len(q) and d_end + 1 < len(D):
+        q_pos = q_end + 1
+        d_pos = d_end + 1
         q_nuc = q[q_pos]
         d_probs = get_probs(d_pos)
         s = expected_score(M, d_probs, q_nuc)
@@ -248,13 +254,13 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
             break
 
         # Update positions and scores
-        q_end += 1
-        d_end += 1
+        q_end = q_pos
+        d_end = d_pos
         current_score = new_score
         if current_score > max_score:
             max_score = current_score
 
-        right_extension += 1
+        #right_extension += 1
 
     if verbose:
         print(f"Final HSP: Q:{q_start}-{q_end}, D:{d_start}-{d_end}, Score: {max_score:.2f}")
