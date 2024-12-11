@@ -437,9 +437,36 @@ def testing_map():
     probability_threshold = float(input("Enter a probability threshold for w-mers (e.g. 0.0 for none): "))
     f_map = build_wmer_map(D, conf_values, w, max_candidates, probability_threshold)
     print(f_map)
+    
+    return D, conf_values, M, w, max_candidates, probability_threshold, f_map
+
+def testing_seeding():
+    q = input("Enter your query sequence: ").strip().upper()
+    D, conf_values, M, w, max_candidates, probability_threshold, f_map = testing_map()
+    verbose_input = input("Enable verbose mode? (y/n): ").strip().lower()
+    verbose = True if verbose_input == 'y' else False
+
+    # Compute background and query distributions
+    background_probs = compute_background_distribution(D, conf_values)
+    query_probs = compute_query_distribution(q)
+
+    # Find seeds
+    seeds = find_seeds(q, f_map, w)
+
+    print("\nFound seeds:")
+    for seed in seeds:
+        print(f"q_wmer: {seed[0]} q_pos: {seed[1]} d_pos: {seed[2]}")
+
+
+def testing_ungapepd():
+    testing_seeding()
+    dropoff_threshold = float(input("Enter drop-off threshold for gapped extension (e.g. 2.0): "))
+
+
+    
 
 
 
 
 if __name__ == "__main__":
-    testing_map()
+    testing_seeding()
