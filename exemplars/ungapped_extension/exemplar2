@@ -1,0 +1,64 @@
+D =  
+AGTCTAACC
+1 1 1 1 1 1 1 1 1
+
+S = 
+A C G T
+1 -1 -1 -1
+-1 1 -1 -1
+-1 -1 1 -1
+-1 -1 -1 1
+
+q = CTA
+w = 2
+max_candidates = 1
+w_mer threshold = 0.8
+ungapped threshold = 1
+
+Output: CTA
+
+###Comment###
+This shows that in the deterministic case, the expected score is simply the score of a match. 
+
+###Output###
+Enter your query sequence: CTA
+Enter word size w: 2
+Enter how many sequences you want to consider at each index: 1
+Enter a probability threshold for w-mers (e.g. 0.0 for none): 0.8
+defaultdict(<class 'list'>, {'AG': [0], 'GT': [1], 'TC': [2], 'CT': [3], 'TA': [4], 'AA': [5], 'AC': [6], 'CC': [7]})
+Enable verbose mode? (y/n): y
+
+Found seeds:
+q_wmer: CT q_pos: 0 d_pos: 3
+q_wmer: TA q_pos: 1 d_pos: 4
+Enter drop-off threshold for ungapped extension (e.g. 2.0): 1
+
+--- Ungapped Extension Phase ---
+
+Processing Seed 1:
+  Query W-mer: 'CT' at Q[0:1]
+  Database Position: D[3:4]
+
+Starting ungapped extension for seed at Q:0-1, D:3-4
+Initial ungapped score: 2.00
+Extending right to Q[2]=A, D[5]
+Expected score: 1.00, New cumulative score: 3.00
+Final HSP: Q:0-2, D:3-5, Score: 3.00
+
+Processing Seed 2:
+  Query W-mer: 'TA' at Q[1:2]
+  Database Position: D[4:5]
+
+Starting ungapped extension for seed at Q:1-2, D:4-5
+Initial ungapped score: 2.00
+Extending left to Q[0]=C, D[3]
+Expected score: 1.00, New cumulative score: 3.00
+Final HSP: Q:0-2, D:3-5, Score: 3.00
+
+--- Ungapped HSPs Found ---
+HSP 1: Q[0:2] = 'CTA' | D[3:5] = 'CTA' | Score: 3.00
+HSP 2: Q[0:2] = 'CTA' | D[3:5] = 'CTA' | Score: 3.00
+
+--- Top Ungapped HSPs ---
+Top HSP 1: Q[0:2] = 'CTA' | D[3:5] = 'CTA' | Score: 3.00
+

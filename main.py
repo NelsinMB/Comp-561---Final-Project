@@ -406,12 +406,11 @@ def main():
         sys.exit(0)
 
     # Sort HSPs by score descending
-    hsps_sorted = sorted(hsps, key=lambda x: x[4], reverse=True)
-    top_hsps = hsps_sorted[:max_candidates]  # Adjust as needed
+    hsps = sorted(hsps, key=lambda x: x[4], reverse=True)
 
-    # Gapped Extension Phase: Perform gapped extension on top HSPs
+    # Gapped Extension Phase: Perform gapped extension HSPs
     gapped_alignments = []
-    for hsp in top_hsps:
+    for hsp in hsps:
         score, align_q, align_d = local_gapped_extension(
             q, D, conf_values, hsp, M, gap_penalty, verbose=verbose
         )
@@ -498,21 +497,32 @@ def testing_ungapped_extension():
         sys.exit(0)
     
     # Sort HSPs by score descending
-    hsps_sorted = sorted(hsps, key=lambda x: x[4], reverse=True)
-    top_hsps = hsps_sorted[:max_candidates]  # Adjust as needed
+    hsps = sorted(hsps, key=lambda x: x[4], reverse=True)
     
-    print("\n--- Top Ungapped HSPs ---")
-    for idx, hsp in enumerate(top_hsps):
-        q_start, q_end, d_start, d_end, score = hsp
-        print(f"Top HSP {idx+1}: Q[{q_start}:{q_end}] = '{q[q_start:q_end+1]}' | "
-              f"D[{d_start}:{d_end}] = '{D[d_start:d_end+1]}' | Score: {score:.2f}")
+        
+    return q, D, conf_values, hsps, M, verbose
 
+def testing_gapped_extension():
+    q, D, conf_values, hsps, M, verbose = testing_ungapped_extension()
 
+    gap_penalty = float(input("Enter gap penalty (e.g. -2.0): "))
 
-    
+    # Gapped Extension Phase: Perform gapped extension on top HSPs
+    gapped_alignments = []
+    for hsp in hsps:
+        score, align_q, align_d = local_gapped_extension(
+            q, D, conf_values, hsp, M, gap_penalty, verbose=verbose
+        )
+        gapped_alignments.append((score, align_q, align_d))
 
-
+    print("\nGapped Alignments found:")
+    for idx, alignment in enumerate(gapped_alignments):
+        score, align_q, align_d = alignment
+        print(f"Gapped Alignment {idx+1}:")
+        print(f"Alignment Score: {score:.2f}")
+        print(f"Query: {align_q}")
+        print(f"DB:    {align_d}\n")
 
 
 if __name__ == "__main__":
-    testing_ungapped_extension()
+    testing_gapped_extension()
