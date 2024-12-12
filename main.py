@@ -376,8 +376,8 @@ def main():
 
 
 def testing_map():
-    sequence_file = './resources/fa2.txt'
-    confidence_file = './resources/conf2.txt'
+    sequence_file = './resources/long.txt'
+    confidence_file = './resources/long_conf.txt'
     substitution_matrix_file = './resources/substitution_matrix.txt'
     D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
     M = load_substitution_matrix(substitution_matrix_file)
@@ -413,7 +413,6 @@ def testing_ungapped_extension():
     """
     Tests the ungapped extension process with verbose output using sample data.
     """
-    # Obtain sample data
     q, D, conf_values, M, w, max_candidates, probability_threshold, f_map, verbose, seeds = testing_seeding()
     
     # Define drop-off threshold
