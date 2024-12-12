@@ -281,31 +281,50 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
     return (best_q_start, best_q_end, best_d_start, best_d_end, max_score)
 
 
-def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, verbose=False):
+def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, dropoff_threshold, verbose=False):
     """
-    Perform a gapped extension (Smith-Waterman) dynamically extending beyond HSP bounds.
+    Perform a gapped extension (Smith-Waterman) dynamically extending beyond HSP bounds,
+    with a stopping condition based on the score falling more than the dropoff_threshold below the max score so far.
+    
+    Parameters:
+        q (str): Query sequence.
+        D (str): Database sequence.
+        conf_values (List[float]): Confidence values for each nucleotide in D.
+        hsp (Tuple[int, int, int, int, float]): HSP represented as (q_start, q_end, d_start, d_end, score).
+        M (Dict[str, Dict[str, float]]): Substitution matrix.
+        gap_penalty (float): Penalty for introducing a gap.
+        dropoff_threshold (float): Threshold to stop extension when score drops below (max_score_so_far - threshold).
+        verbose (bool): If True, prints detailed debug information.
+        
+    Returns:
+        Tuple[float, str, str]: (max_score, aligned_query, aligned_database)
     """
     q_start, q_end, d_start, d_end, hsp_score = hsp
 
-    # Use full sequences for alignment
+    # Initialize variables
     len_q = len(q)
     len_D = len(D)
-
-    # DP matrix and traceback
+    
+    # Initialize DP matrix
     dp = [[0] * (len_D + 1) for _ in range(len_q + 1)]
-    traceback = [[None] * (len_D + 1) for _ in range(len_q + 1)]
-
-    max_score = 0.0
+    
+    max_score_so_far = 0.0
     max_pos = None
+    early_stop = False
 
     def get_probs(j):
+        """
+        Retrieve nucleotide probabilities for position j in D.
+        """
         max_nuc = D[j - 1]
         p_max = conf_values[j - 1]
         return nucleotide_probabilities(p_max, max_nuc)
 
-    # Fill DP matrix dynamically
+    # Fill DP matrix with dynamic programming
     for i in range(1, len_q + 1):
         q_nuc = q[i - 1]
+        current_row_max = 0.0  # Reset for the current row
+        
         for j in range(1, len_D + 1):
             dist = get_probs(j)
             match = dp[i - 1][j - 1] + expected_score(M, dist, q_nuc)
@@ -313,34 +332,58 @@ def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, verbose=False
             insert = dp[i][j - 1] + gap_penalty
             dp[i][j] = max(0, match, delete, insert)
 
-            if dp[i][j] > max_score:
-                max_score = dp[i][j]
+            # Update current row's max score
+            if dp[i][j] > current_row_max:
+                current_row_max = dp[i][j]
+            
+            # Update global max score and position
+            if dp[i][j] > max_score_so_far:
+                max_score_so_far = dp[i][j]
                 max_pos = (i, j)
 
-    # Traceback from max_pos
+        # Check the drop-off condition after processing the row
+        if current_row_max < (max_score_so_far - dropoff_threshold):
+            if verbose:
+                print(f"Stopping extension: Current row max {current_row_max:.2f} is below (max_score_so_far - threshold) "
+                      f"{max_score_so_far - dropoff_threshold:.2f}")
+            early_stop = True
+            break
+
+    # If early stopping was triggered, return no alignment
+    if early_stop or max_pos is None:
+        if verbose:
+            print("Early termination: No significant alignment found within the drop-off threshold.")
+        return 0.0, '', ''
+
+    # Traceback to retrieve the alignment
     aligned_q = []
     aligned_D = []
     i, j = max_pos
     while i > 0 and j > 0 and dp[i][j] > 0:
-        if dp[i][j] == dp[i - 1][j - 1] + expected_score(M, get_probs(j), q[i - 1]):
+        current_score = dp[i][j]
+        score_current = expected_score(M, get_probs(j), q[i - 1])
+        
+        if current_score == dp[i - 1][j - 1] + score_current:
             aligned_q.append(q[i - 1])
             aligned_D.append(D[j - 1])
             i -= 1
             j -= 1
-        elif dp[i][j] == dp[i - 1][j] + gap_penalty:
+        elif current_score == dp[i - 1][j] + gap_penalty:
             aligned_q.append(q[i - 1])
             aligned_D.append('-')
             i -= 1
-        elif dp[i][j] == dp[i][j - 1] + gap_penalty:
+        elif current_score == dp[i][j - 1] + gap_penalty:
             aligned_q.append('-')
             aligned_D.append(D[j - 1])
             j -= 1
         else:
-            break
+            break  # This condition should not occur if DP is correctly filled
 
+    # Reverse to get the correct alignment
     aligned_q.reverse()
     aligned_D.reverse()
 
+    # Optional: Calculate the starting positions (can be used for further analysis)
     query_start = i
     db_start = j
 
@@ -348,10 +391,29 @@ def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, verbose=False
         print(f"\nGapped Extension on HSP Q:{q_start}-{q_end}, D:{d_start}-{d_end}")
         print(f"Extended Query: {''.join(aligned_q)}")
         print(f"Extended DB:    {''.join(aligned_D)}")
-        print(f"Gapped Extension Score: {max_score:.2f}")
+        print(f"Gapped Extension Score: {max_score_so_far:.2f}")
 
-    # Return the expected number of values for unpacking
-    return max_score, ''.join(aligned_q), ''.join(aligned_D)
+    return max_score_so_far, ''.join(aligned_q), ''.join(aligned_D)
+
+def remove_duplicate_hsps(hsps):
+    """
+    Remove duplicate HSPs from the list.
+
+    Parameters:
+        hsps (List[Tuple[int, int, int, int, float]]): List of HSPs.
+
+    Returns:
+        List[Tuple[int, int, int, int, float]]: List of unique HSPs.
+    """
+    seen = set()
+    unique_hsps = []
+    for hsp in hsps:
+        # Create a hashable key for the HSP
+        key = (hsp[0], hsp[1], hsp[2], hsp[3], round(hsp[4], 4))  # Rounded score to handle floating point precision
+        if key not in seen:
+            seen.add(key)
+            unique_hsps.append(hsp)
+    return unique_hsps
 
 
 def filter_identical_alignments(alignments):
@@ -433,6 +495,9 @@ def testing_ungapped_extension():
             q, D, conf_values, q_pos, d_pos, w, M, dropoff_threshold, verbose=verbose
         )
         hsps.append(hsp)
+
+        hsps = remove_duplicate_hsps(hsps)
+
     
     print("\n--- Ungapped HSPs Found ---")
     for idx, hsp in enumerate(hsps):
@@ -460,7 +525,7 @@ def testing_gapped_extension():
     gapped_alignments = []
     for hsp in hsps:
         score, align_q, align_d = local_gapped_extension(
-            q, D, conf_values, hsp, M, gap_penalty, verbose=verbose
+            q, D, conf_values, hsp, M, gap_penalty, dropoff_threshold = 10.0, verbose=verbose
         )
         gapped_alignments.append((score, align_q, align_d))
 
