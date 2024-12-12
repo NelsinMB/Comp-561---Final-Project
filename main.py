@@ -299,6 +299,7 @@ def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, dropoff_thres
     Returns:
         Tuple[float, str, str]: (max_score, aligned_query, aligned_database)
     """
+
     q_start, q_end, d_start, d_end, hsp_score = hsp
 
     # Initialize variables
@@ -511,7 +512,7 @@ def testing_ungapped_extension():
         sys.exit(0)
     
     # Sort HSPs by score descending
-    hsps = sorted(hsps, key=lambda x: x[4], reverse=True)
+    hsps = sorted(hsps, key=lambda x: x[4], reverse=True)[:5]
     
         
     return q, D, conf_values, hsps, M, verbose
@@ -520,12 +521,18 @@ def testing_gapped_extension():
     q, D, conf_values, hsps, M, verbose = testing_ungapped_extension()
 
     gap_penalty = float(input("Enter gap penalty (e.g. -2.0): "))
+    max_hsps = int(input("Enter the maximum number of HSPs to perform gapped extension on (-1 for all): "))
+
+    # Not sure if this is needed.
+    if max_hsps == -1:
+        max_hsps = len(hsps)
+    hsps = hsps[:max_hsps]
 
     # Gapped Extension Phase: Perform gapped extension on top HSPs
     gapped_alignments = []
     for hsp in hsps:
         score, align_q, align_d = local_gapped_extension(
-            q, D, conf_values, hsp, M, gap_penalty, dropoff_threshold = 10.0, verbose=verbose
+            q, D, conf_values, hsp, M, gap_penalty, dropoff_threshold=10.0, verbose=verbose
         )
         gapped_alignments.append((score, align_q, align_d))
 
