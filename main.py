@@ -283,49 +283,35 @@ def ungapped_extension(q, D, conf_values, seed_q_start, seed_d_start, w, M, drop
 
 def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, dropoff_threshold, verbose=False):
     """
-    Perform a gapped extension (Smith-Waterman) dynamically extending beyond HSP bounds,
-    with a stopping condition based on the score falling more than the dropoff_threshold below the max score so far.
-    
-    Parameters:
-        q (str): Query sequence.
-        D (str): Database sequence.
-        conf_values (List[float]): Confidence values for each nucleotide in D.
-        hsp (Tuple[int, int, int, int, float]): HSP represented as (q_start, q_end, d_start, d_end, score).
-        M (Dict[str, Dict[str, float]]): Substitution matrix.
-        gap_penalty (float): Penalty for introducing a gap.
-        dropoff_threshold (float): Threshold to stop extension when score drops below (max_score_so_far - threshold).
-        verbose (bool): If True, prints detailed debug information.
-        
+    Perform a gapped extension (Smith-Waterman-like) and return alignment and coordinates.
     Returns:
-        Tuple[float, str, str]: (max_score, aligned_query, aligned_database)
+        score (float): Best local alignment score
+        aligned_q (str): Aligned query string
+        aligned_D (str): Aligned database string
+        d_start_final (int): Start coordinate in D for this alignment (0-based)
+        d_end_final (int): End coordinate in D for this alignment (0-based)
     """
-
     q_start, q_end, d_start, d_end, hsp_score = hsp
-
-    # Initialize variables
     len_q = len(q)
     len_D = len(D)
-    
+    nucleotides = ['A','C','G','T']
+
     # Initialize DP matrix
     dp = [[0] * (len_D + 1) for _ in range(len_q + 1)]
-    
     max_score_so_far = 0.0
     max_pos = None
     early_stop = False
 
     def get_probs(j):
-        """
-        Retrieve nucleotide probabilities for position j in D.
-        """
         max_nuc = D[j - 1]
         p_max = conf_values[j - 1]
         return nucleotide_probabilities(p_max, max_nuc)
 
-    # Fill DP matrix with dynamic programming
+    # Fill the DP matrix
     for i in range(1, len_q + 1):
         q_nuc = q[i - 1]
-        current_row_max = 0.0  # Reset for the current row
-        
+        current_row_max = 0.0
+
         for j in range(1, len_D + 1):
             dist = get_probs(j)
             match = dp[i - 1][j - 1] + expected_score(M, dist, q_nuc)
@@ -333,37 +319,35 @@ def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, dropoff_thres
             insert = dp[i][j - 1] + gap_penalty
             dp[i][j] = max(0, match, delete, insert)
 
-            # Update current row's max score
             if dp[i][j] > current_row_max:
                 current_row_max = dp[i][j]
-            
-            # Update global max score and position
+
             if dp[i][j] > max_score_so_far:
                 max_score_so_far = dp[i][j]
                 max_pos = (i, j)
 
-        # Check the drop-off condition after processing the row
         if current_row_max < (max_score_so_far - dropoff_threshold):
             if verbose:
-                print(f"Stopping extension: Current row max {current_row_max:.2f} is below (max_score_so_far - threshold) "
-                      f"{max_score_so_far - dropoff_threshold:.2f}")
+                print("Stopping extension early due to dropoff threshold.")
             early_stop = True
             break
 
-    # If early stopping was triggered, return no alignment
     if early_stop or max_pos is None:
         if verbose:
-            print("Early termination: No significant alignment found within the drop-off threshold.")
-        return 0.0, '', ''
+            print("No significant gapped alignment found.")
+        return 0.0, '', '', -1, -1
 
     # Traceback to retrieve the alignment
     aligned_q = []
     aligned_D = []
     i, j = max_pos
+
     while i > 0 and j > 0 and dp[i][j] > 0:
         current_score = dp[i][j]
-        score_current = expected_score(M, get_probs(j), q[i - 1])
-        
+        dist = get_probs(j)
+        score_current = expected_score(M, dist, q[i - 1])
+
+        # Check from where we came
         if current_score == dp[i - 1][j - 1] + score_current:
             aligned_q.append(q[i - 1])
             aligned_D.append(D[j - 1])
@@ -378,23 +362,38 @@ def local_gapped_extension(q, D, conf_values, hsp, M, gap_penalty, dropoff_thres
             aligned_D.append(D[j - 1])
             j -= 1
         else:
-            break  # This condition should not occur if DP is correctly filled
+            # This shouldn't happen if DP is correct.
+            break
 
-    # Reverse to get the correct alignment
     aligned_q.reverse()
     aligned_D.reverse()
 
-    # Optional: Calculate the starting positions (can be used for further analysis)
-    query_start = i
-    db_start = j
+    # i and j now indicate the position in dp matrix just before start of alignment
+    # dp matrix is 1-based indexed for sequences.
+    # If dp indexing: i and j correspond to q[i-1], D[j-1].
+    # So q_start_final = i - 1 in 0-based q indexing
+    # and d_start_final = j - 1 in 0-based D indexing
+    q_start_final = i  # q start in dp coordinates is i, zero-based in q is i-1, but i=0 means q_start=0
+    d_start_final = j  # Similarly for d
+
+    # Convert dp indices to 0-based for sequences
+    # Since dp[i][j] corresponds to q[i-1] and D[j-1], q_start_final = i-1, d_start_final = j-1
+    q_start_final = q_start_final
+    d_start_final = d_start_final
+
+    # Length of alignment
+    aligned_length = len(aligned_q)
+    q_end_final = q_start_final + aligned_length - 1
+    d_end_final = d_start_final + aligned_length - 1
 
     if verbose:
         print(f"\nGapped Extension on HSP Q:{q_start}-{q_end}, D:{d_start}-{d_end}")
         print(f"Extended Query: {''.join(aligned_q)}")
         print(f"Extended DB:    {''.join(aligned_D)}")
         print(f"Gapped Extension Score: {max_score_so_far:.2f}")
+        print(f"Gapped alignment covers D[{d_start_final}:{d_end_final}]")
 
-    return max_score_so_far, ''.join(aligned_q), ''.join(aligned_D)
+    return max_score_so_far, ''.join(aligned_q), ''.join(aligned_D), d_start_final, d_end_final
 
 def remove_duplicate_hsps(hsps):
     """
@@ -681,39 +680,29 @@ def generate_query_from_probabilistic_genome(D, conf_values, query_length, num_m
 
     return ''.join(query), start_pos
 
-def test_algorithm(D, conf_values, query_length, num_mutations=2, num_indels=1, verbose=False):
-    """
-    Test the sequence alignment algorithm with a probabilistically generated query sequence.
+import random
 
-    Parameters:
-        D (str): Probabilistic genome (most likely nucleotide sequence).
-        conf_values (List[float]): Confidence values for each position in D.
-        query_length (int): Length of the query sequence.
-        num_mutations (int): Number of random substitutions to introduce.
-        num_indels (int): Number of random indels to introduce.
-        verbose (bool): Whether to print detailed output during the test.
-
-    Returns:
-        None
+def test_algorithm(D, conf_values, query_length, num_mutations=2, num_indels=1, verbose=True):
     """
-    # Generate query sequence
+    Modified test_algorithm that returns whether alignment was found rather than just printing.
+    """
+    # Generate query
     query, true_start_pos = generate_query_from_probabilistic_genome(D, conf_values, query_length, num_mutations, num_indels)
 
     if verbose:
         print(f"Generated query sequence: {query}")
         print(f"True start position in genome: {true_start_pos}")
 
-    # Load a substitution matrix (you may need to provide your own matrix file)
+    # Load substitution matrix
     substitution_matrix_file = './resources/substitution_matrix.txt'
     M = load_substitution_matrix(substitution_matrix_file)
 
-    # Build the w-mer map for the probabilistic genome
-    w = 11  # Word size (adjust as needed)
-    max_candidates = 10  # Number of sequences to consider per position
-    probability_threshold = 0.1  # Adjust as needed
+    # Parameters
+    w = 11
+    max_candidates = 10
+    probability_threshold = 0.1
     f_map = build_wmer_map(D, conf_values, w, max_candidates, probability_threshold)
 
-    # Find seeds
     seeds = find_seeds(query, f_map, w)
 
     if verbose:
@@ -721,59 +710,93 @@ def test_algorithm(D, conf_values, query_length, num_mutations=2, num_indels=1, 
         for seed in seeds:
             print(f"Query w-mer: {seed[0]} | Query pos: {seed[1]} | Genome pos: {seed[2]}")
 
-    # Perform ungapped extension
-    dropoff_threshold = 10.0
+    dropoff_threshold = 10
     hsps = []
     for q_wmer, q_pos, d_pos in seeds:
         hsp = ungapped_extension(query, D, conf_values, q_pos, d_pos, w, M, dropoff_threshold, verbose)
         hsps.append(hsp)
 
-    # Remove duplicates and sort by score
     hsps = remove_duplicate_hsps(hsps)
     hsps = sorted(hsps, key=lambda x: x[4], reverse=True)
+    hsps = hsps[:1]
 
-    if verbose:
+    if verbose and hsps:
         print("\nUngapped HSPs:")
         for hsp in hsps:
             print(hsp)
 
-    # Perform gapped extension
-    gap_penalty = -2.0
+    gap_penalty = -1.0
     gapped_alignments = []
+    alignment_found = False
+
+    # Perform gapped extension on all HSPs
     for hsp in hsps:
-        alignment = local_gapped_extension(query, D, conf_values, hsp, M, gap_penalty, dropoff_threshold, verbose)
-        gapped_alignments.append(alignment)
+        score, align_q, align_d, d_start_final, d_end_final = local_gapped_extension(
+            query, D, conf_values, hsp, M, gap_penalty, dropoff_threshold, verbose
+        )
+        gapped_alignments.append((score, align_q, align_d, d_start_final, d_end_final))
+        # Check correctness with final coordinates
+        if d_start_final != -1 and d_end_final != -1:
+            if true_start_pos in range(d_start_final, d_end_final + 1):
+                alignment_found = True
+                break
 
-    # Filter unique alignments
-    gapped_alignments = filter_identical_alignments(gapped_alignments)
+    # If verbose, print one example alignment
+    if verbose and gapped_alignments:
+        print("\nExample Gapped alignment:")
+        example = gapped_alignments[0]
+        print(f"Score: {example[0]:.2f}\nQuery: {example[1]}\nGenome: {example[2]}\nD coords: {example[3]}-{example[4]}")
 
-    if verbose:
-        print("\nGapped alignments:")
-        for alignment in gapped_alignments:
-            print(f"Score: {alignment[0]}\nQuery: {alignment[1]}\nGenome: {alignment[2]}\n")
+    return alignment_found
 
-    # Check if the true starting position is captured in the alignments
-    alignment_found = any(true_start_pos in range(hsp[2], hsp[3] + 1) for hsp in hsps)
-    if alignment_found:
-        print("\nThe algorithm successfully identified the correct portion of the genome.")
-    else:
-        print("\nThe algorithm failed to identify the correct portion of the genome.")
+
+def run_systematic_tests(D, conf_values, query_length=100, repeats=10, verbose=False):
+    """
+    Run systematic tests for different combinations of mutations and indels.
+    Results are written to 'test_results.txt' in CSV-like format:
+    Mutations,Indels,Trials,Successes,Success_Rate
+    """
+
+    scenarios = [
+        (1, 1),
+        (2, 2),
+        (5, 5),
+    ]
+
+    # Open a text file to write the results
+    with open("test_results.txt", "w") as outfile:
+        outfile.write("Mutations,Indels,Trials,Successes,Success_Rate\n")
+
+        for (muts, inds) in scenarios:
+            successes = 0
+            for _ in range(repeats):
+                alignment_found = test_algorithm(
+                    D, conf_values, query_length,
+                    num_mutations=muts,
+                    num_indels=inds,
+                    verbose=verbose
+                )
+                if alignment_found:
+                    successes += 1
+
+            success_rate = successes / repeats
+            # Write results to the file in CSV-like format
+            outfile.write(f"{muts},{inds},{repeats},{successes},{success_rate:.2f}\n")
+
+    # If you still want some indication on the console:
+    print("Testing complete. Results have been written to test_results.txt.")
+
+
 
 
 if __name__ == "__main__":
+    # Load your data here
     sequence_file = './resources/long.txt'
     confidence_file = './resources/long_conf.txt'
     substitution_matrix_file = './resources/substitution_matrix.txt'
+
     D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
-    M = load_substitution_matrix(substitution_matrix_file)
-    w = int(input("Enter word size w: "))
-    max_candidates = int(input("Enter how many sequences you want to consider at each index: "))
-    probability_threshold = float(input("Enter a probability threshold for w-mers (e.g. 0.0 for none): "))
-    f_map = build_wmer_map(D, conf_values, w, max_candidates, probability_threshold)
 
-
-
-    query_length = 1000
-    num_mutations = 20
-    num_indels = 20
-    test_algorithm(D,conf_values, query_length, num_mutations, num_indels, True)
+    # Run the systematic tests
+    # Increase repeats if you want more stable statistics.
+    run_systematic_tests(D, conf_values, query_length=50, repeats=10, verbose=True)

@@ -1,0 +1,4 @@
+Mutations,Indels,Trials,Successes,Success_Rate
+1,1,10,7,0.70
+2,2,10,7,0.70
+5,5,10,8,0.80
