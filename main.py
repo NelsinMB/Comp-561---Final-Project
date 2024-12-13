@@ -434,13 +434,10 @@ def filter_identical_alignments(alignments):
     return unique_alignments
 
 
-def main():
-   testing_gapped_extension() #May as well use this now.
-
 
 def testing_map():
-    sequence_file = './resources/long.txt'
-    confidence_file = './resources/long_conf.txt'
+    sequence_file = './resources/fa2.txt'
+    confidence_file = './resources/conf2.txt'
     substitution_matrix_file = './resources/substitution_matrix.txt'
     D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
     M = load_substitution_matrix(substitution_matrix_file)
@@ -546,6 +543,237 @@ def testing_gapped_extension():
         print(f"Query: {align_q}")
         print(f"DB:    {align_d}\n")
 
+def main():
+    sequence_file = './resources/fa2.txt'
+    confidence_file = './resources/conf2.txt'
+    substitution_matrix_file = './resources/substitution_matrix.txt'
+    D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
+    M = load_substitution_matrix(substitution_matrix_file)
+    w = int(input("Enter word size w: "))
+    max_candidates = int(input("Enter how many sequences you want to consider at each index: "))
+    probability_threshold = float(input("Enter a probability threshold for w-mers (e.g. 0.0 for none): "))
+    f_map = build_wmer_map(D, conf_values, w, max_candidates, probability_threshold)
+
+    q = input("Enter your query sequence: ").strip().upper()
+    verbose_input = input("Enable verbose mode? (y/n): ").strip().lower()
+    verbose = True if verbose_input == 'y' else False
+
+    # Compute background and query distributions
+    background_probs = compute_background_distribution(D, conf_values)
+    query_probs = compute_query_distribution(q)
+
+    # Find seeds
+    seeds = find_seeds(q, f_map, w)
+
+    print("\nFound seeds:")
+    for seed in seeds:
+        print(f"q_wmer: {seed[0]} q_pos: {seed[1]} d_pos: {seed[2]}")
+
+    dropoff_threshold = float(input("Enter drop-off threshold for ungapped extension (e.g. 2.0): "))
+    
+    print("\n--- Ungapped Extension Phase ---")
+    
+    # Ungapped Extension Phase: Extend seeds into HSPs
+    hsps = []
+    for idx, (q_wmer, q_pos, d_pos) in enumerate(seeds):
+
+        if verbose: 
+            print(f"\nProcessing Seed {idx+1}:")
+            print(f"  Query W-mer: '{q_wmer}' at Q[{q_pos}:{q_pos + w -1}]")
+            print(f"  Database Position: D[{d_pos}:{d_pos + w -1}]")
+        
+        hsp = ungapped_extension(
+            q, D, conf_values, q_pos, d_pos, w, M, dropoff_threshold, verbose=verbose
+        )
+        hsps.append(hsp)
+
+        hsps = remove_duplicate_hsps(hsps)
+
+    
+    print("\n--- Ungapped HSPs Found ---")
+    for idx, hsp in enumerate(hsps):
+        q_start, q_end, d_start, d_end, score = hsp
+        print(f"HSP {idx+1}: Q[{q_start}:{q_end}] = '{q[q_start:q_end+1]}' | "
+              f"D[{d_start}:{d_end}] = '{D[d_start:d_end+1]}' | Score: {score:.2f}")
+    
+    # Select top HSPs (e.g., top 1)
+    if not hsps:
+        print("\nNo HSPs found. Exiting.")
+        sys.exit(0)
+    
+
+    # Sort HSPs by score descending
+    hsps = sorted(hsps, key=lambda x: x[4], reverse=True)
+
+    gap_penalty = float(input("Enter gap penalty (e.g. -2.0): "))
+    max_hsps = int(input("Enter the maximum number of HSPs to perform gapped extension on (-1 for all): "))
+
+    # Not sure if this is needed.
+    if max_hsps == -1:
+        max_hsps = len(hsps)
+    hsps = hsps[:max_hsps]
+
+    # Gapped Extension Phase: Perform gapped extension on top HSPs
+    gapped_alignments = []
+    for hsp in hsps:
+        score, align_q, align_d = local_gapped_extension(
+            q, D, conf_values, hsp, M, gap_penalty, dropoff_threshold=10.0, verbose=verbose
+        )
+        gapped_alignments.append((score, align_q, align_d))
+
+    filtered_gapped_alignments = filter_identical_alignments(gapped_alignments)
+
+    print("\nGapped Alignments found:")
+    for idx, alignment in enumerate(filtered_gapped_alignments):
+        score, align_q, align_d = alignment
+        print(f"Gapped Alignment {idx+1}:")
+        print(f"Alignment Score: {score:.2f}")
+        print(f"Query: {align_q}")
+        print(f"DB:    {align_d}\n")
+
+import random
+
+def generate_query_from_probabilistic_genome(D, conf_values, query_length, num_mutations=2, num_indels=1):
+
+    
+    """
+    Generate a query sequence from a probabilistic genome.
+
+    Parameters:
+        D (str): Probabilistic genome (most likely nucleotide sequence).
+        conf_values (List[float]): Confidence values for each position in D.
+        query_length (int): Length of the query sequence.
+        num_mutations (int): Number of random substitutions to introduce.
+        num_indels (int): Number of random indels to introduce.
+
+    Returns:
+        str: Generated query sequence with mutations and indels.
+        int: Starting position of the query in the original genome.
+    """
+    nucleotides = ['A', 'C', 'G', 'T']
+
+    # Step 1: Pick a random starting position for the query
+    start_pos = random.randint(0, len(D) - query_length)
+    query = []
+
+    # Step 2: Generate the query sequence based on probabilities
+    for i in range(start_pos, start_pos + query_length):
+        max_nuc = D[i]
+        p_max = conf_values[i]
+        probs = nucleotide_probabilities(p_max, max_nuc)
+        query.append(random.choices(nucleotides, weights=[probs[n] for n in nucleotides])[0])
+
+    # Step 3: Introduce random substitutions
+    query = list(query)
+    mutation_indices = random.sample(range(query_length), min(num_mutations, query_length))
+    for idx in mutation_indices:
+        original_nuc = query[idx]
+        query[idx] = random.choice([n for n in nucleotides if n != original_nuc])
+
+    # Step 4: Introduce random indels
+    for _ in range(num_indels):
+        if random.random() < 0.5 and len(query) > 1:  # Perform deletion
+            del_idx = random.randint(0, len(query) - 1)
+            query.pop(del_idx)
+        else:  # Perform insertion
+            ins_idx = random.randint(0, len(query))
+            query.insert(ins_idx, random.choice(nucleotides))
+
+    return ''.join(query), start_pos
+
+def test_algorithm(D, conf_values, query_length, num_mutations=2, num_indels=1, verbose=False):
+    """
+    Test the sequence alignment algorithm with a probabilistically generated query sequence.
+
+    Parameters:
+        D (str): Probabilistic genome (most likely nucleotide sequence).
+        conf_values (List[float]): Confidence values for each position in D.
+        query_length (int): Length of the query sequence.
+        num_mutations (int): Number of random substitutions to introduce.
+        num_indels (int): Number of random indels to introduce.
+        verbose (bool): Whether to print detailed output during the test.
+
+    Returns:
+        None
+    """
+    # Generate query sequence
+    query, true_start_pos = generate_query_from_probabilistic_genome(D, conf_values, query_length, num_mutations, num_indels)
+
+    if verbose:
+        print(f"Generated query sequence: {query}")
+        print(f"True start position in genome: {true_start_pos}")
+
+    # Load a substitution matrix (you may need to provide your own matrix file)
+    substitution_matrix_file = './resources/substitution_matrix.txt'
+    M = load_substitution_matrix(substitution_matrix_file)
+
+    # Build the w-mer map for the probabilistic genome
+    w = 11  # Word size (adjust as needed)
+    max_candidates = 10  # Number of sequences to consider per position
+    probability_threshold = 0.1  # Adjust as needed
+    f_map = build_wmer_map(D, conf_values, w, max_candidates, probability_threshold)
+
+    # Find seeds
+    seeds = find_seeds(query, f_map, w)
+
+    if verbose:
+        print("\nSeeds found:")
+        for seed in seeds:
+            print(f"Query w-mer: {seed[0]} | Query pos: {seed[1]} | Genome pos: {seed[2]}")
+
+    # Perform ungapped extension
+    dropoff_threshold = 10.0
+    hsps = []
+    for q_wmer, q_pos, d_pos in seeds:
+        hsp = ungapped_extension(query, D, conf_values, q_pos, d_pos, w, M, dropoff_threshold, verbose)
+        hsps.append(hsp)
+
+    # Remove duplicates and sort by score
+    hsps = remove_duplicate_hsps(hsps)
+    hsps = sorted(hsps, key=lambda x: x[4], reverse=True)
+
+    if verbose:
+        print("\nUngapped HSPs:")
+        for hsp in hsps:
+            print(hsp)
+
+    # Perform gapped extension
+    gap_penalty = -2.0
+    gapped_alignments = []
+    for hsp in hsps:
+        alignment = local_gapped_extension(query, D, conf_values, hsp, M, gap_penalty, dropoff_threshold, verbose)
+        gapped_alignments.append(alignment)
+
+    # Filter unique alignments
+    gapped_alignments = filter_identical_alignments(gapped_alignments)
+
+    if verbose:
+        print("\nGapped alignments:")
+        for alignment in gapped_alignments:
+            print(f"Score: {alignment[0]}\nQuery: {alignment[1]}\nGenome: {alignment[2]}\n")
+
+    # Check if the true starting position is captured in the alignments
+    alignment_found = any(true_start_pos in range(hsp[2], hsp[3] + 1) for hsp in hsps)
+    if alignment_found:
+        print("\nThe algorithm successfully identified the correct portion of the genome.")
+    else:
+        print("\nThe algorithm failed to identify the correct portion of the genome.")
+
 
 if __name__ == "__main__":
-    main()
+    sequence_file = './resources/long.txt'
+    confidence_file = './resources/long_conf.txt'
+    substitution_matrix_file = './resources/substitution_matrix.txt'
+    D, conf_values = load_sequence_and_confidence(sequence_file, confidence_file)
+    M = load_substitution_matrix(substitution_matrix_file)
+    w = int(input("Enter word size w: "))
+    max_candidates = int(input("Enter how many sequences you want to consider at each index: "))
+    probability_threshold = float(input("Enter a probability threshold for w-mers (e.g. 0.0 for none): "))
+    f_map = build_wmer_map(D, conf_values, w, max_candidates, probability_threshold)
+
+
+
+    query_length = 1000
+    num_mutations = 20
+    num_indels = 20
+    test_algorithm(D,conf_values, query_length, num_mutations, num_indels, True)
